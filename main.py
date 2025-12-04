@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-import os
-import pickle
-from base64 import b64decode,b64encode
+# import os  # REMOVED: Not used anywhere in the code
+# import pickle  # REMOVED: Previously used for dangerous deserialization, now removed for security
+from base64 import b64decode, b64encode
 from binascii import hexlify, unhexlify
-from os import popen
-from lxml import etree
+from os import popen  # WARNING: Command injection risk - used in rp() function
+from lxml import etree  # WARNING: XXE vulnerability risk - used in XML parsing
 import html
 from Crypto.Cipher import AES
 from Crypto import Random
 import argparse
 import sys
-
 
 from flask import Flask, request, make_response, render_template_string
 
@@ -109,8 +108,8 @@ def decrypt(value, key):
     try:
         decrypted = cipher.decrypt_and_verify(ciphertext, auth_tag)
         return decrypted
-    except ValueError as e:
-        raise Exception('Authentication verification failed - data may be tampered')
+    except ValueError:
+        raise ValueError('Authentication verification failed - data may be tampered')
 
 
 def rp(command):
@@ -142,23 +141,23 @@ def index():
 # 1. Cookie setter/getter - SECURE VERSION
 @app.route('/cookie', methods = ['POST'])  # Only POST method for security
 def cookie():
-    cookieValue = None
+    cookie_value = None
     value = None
     
     if request.method == 'POST':
-        cookieValue = request.form.get('value', '')
-        value = cookieValue
+        cookie_value = request.form.get('value', '')
+        value = cookie_value
     
     # Read cookie safely without pickle deserialization
     if 'value' in request.cookies and not value:
         try:
             # Use simple base64 encoding instead of dangerous pickle
-            cookieValue = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
+            cookie_value = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
         except Exception:
-            cookieValue = "Invalid cookie data"
+            cookie_value = "Invalid cookie data"
     
     # Escape HTML to prevent XSS
-    safe_cookie_value = html.escape(str(cookieValue)) if cookieValue else ""
+    safe_cookie_value = html.escape(str(cookie_value)) if cookie_value else ""
         
     form = """
     <html>
@@ -182,18 +181,18 @@ def cookie():
 # Alternative GET route for displaying the form (read-only)
 @app.route('/cookie', methods = ['GET'])
 def cookie_form():
-    cookieValue = None
+    cookie_value = None
     
     # Read cookie safely without pickle deserialization
     if 'value' in request.cookies:
         try:
             # Use simple base64 encoding instead of dangerous pickle
-            cookieValue = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
+            cookie_value = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
         except Exception:
-            cookieValue = "Invalid cookie data"
+            cookie_value = "Invalid cookie data"
     
     # Escape HTML to prevent XSS
-    safe_cookie_value = html.escape(str(cookieValue)) if cookieValue else ""
+    safe_cookie_value = html.escape(str(cookie_value)) if cookie_value else ""
         
     form = """
     <html>
