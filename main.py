@@ -79,23 +79,38 @@ def unpad(value, bs=BLOCKSIZE):
 
 
 def pad(value, bs=BLOCKSIZE):
-    pv = bs - (len(value) % bs)
-    return value + (chr(pv) * pv).encode()
+    # PKCS7 padding - more secure implementation
+    padding_length = bs - (len(value) % bs)
+    padding = bytes([padding_length]) * padding_length
+    return value + padding
 
 
 def encrypt(value, key):
-    iv = Random.new().read(BLOCKSIZE)
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    padded_value = pad(value)
-    return iv + cipher.encrypt(padded_value)
+    # Use GCM mode for authenticated encryption (more secure than CBC)
+    nonce = Random.new().read(12)  # 96-bit nonce for GCM
+    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    
+    # GCM doesn't need manual padding
+    if isinstance(value, str):
+        value = value.encode('utf-8')
+    
+    ciphertext, auth_tag = cipher.encrypt_and_digest(value)
+    # Return nonce + auth_tag + ciphertext
+    return nonce + auth_tag + ciphertext
 
 
 def decrypt(value, key):
-    iv = value[:BLOCKSIZE]
-    decrypt_value = value[BLOCKSIZE:]
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted = cipher.decrypt(decrypt_value)
-    return unpad(decrypted)
+    # Extract components for GCM decryption
+    nonce = value[:12]  # 96-bit nonce
+    auth_tag = value[12:28]  # 128-bit auth tag
+    ciphertext = value[28:]
+    
+    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    try:
+        decrypted = cipher.decrypt_and_verify(ciphertext, auth_tag)
+        return decrypted
+    except ValueError as e:
+        raise Exception('Authentication verification failed - data may be tampered')
 
 
 def rp(command):
@@ -124,22 +139,30 @@ def index():
     """
 
 
-# 1. Cookie setter/getter
-@app.route('/cookie', methods = ['POST', 'GET'])
+# 1. Cookie setter/getter - SECURE VERSION
+@app.route('/cookie', methods = ['POST'])  # Only POST method for security
 def cookie():
     cookieValue = None
     value = None
     
     if request.method == 'POST':
-        cookieValue = request.form['value']
+        cookieValue = request.form.get('value', '')
         value = cookieValue
-    elif 'value' in request.cookies:
-        cookieValue = pickle.loads(b64decode(request.cookies['value'])) 
     
+    # Read cookie safely without pickle deserialization
+    if 'value' in request.cookies and not value:
+        try:
+            # Use simple base64 encoding instead of dangerous pickle
+            cookieValue = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
+        except Exception:
+            cookieValue = "Invalid cookie data"
+    
+    # Escape HTML to prevent XSS
+    safe_cookie_value = html.escape(str(cookieValue)) if cookieValue else ""
         
     form = """
     <html>
-       <body>Cookie value: """ + str(cookieValue) +"""
+       <body>Cookie value: """ + safe_cookie_value +"""
           <form action = "/cookie" method = "POST">
              <p><h3>Enter value to be stored in cookie</h3></p>
              <p><input type = 'text' name = 'value'/></p>
@@ -151,9 +174,40 @@ def cookie():
     resp = make_response(form)
     
     if value:
-        resp.set_cookie('value', b64encode(pickle.dumps(value)))
+        # Use safe base64 encoding instead of pickle
+        resp.set_cookie('value', b64encode(value.encode('utf-8')), httponly=True, secure=True)
 
     return resp
+
+# Alternative GET route for displaying the form (read-only)
+@app.route('/cookie', methods = ['GET'])
+def cookie_form():
+    cookieValue = None
+    
+    # Read cookie safely without pickle deserialization
+    if 'value' in request.cookies:
+        try:
+            # Use simple base64 encoding instead of dangerous pickle
+            cookieValue = b64decode(request.cookies['value']).decode('utf-8', errors='ignore')
+        except Exception:
+            cookieValue = "Invalid cookie data"
+    
+    # Escape HTML to prevent XSS
+    safe_cookie_value = html.escape(str(cookieValue)) if cookieValue else ""
+        
+    form = """
+    <html>
+       <body>Cookie value: """ + safe_cookie_value +"""
+          <form action = "/cookie" method = "POST">
+             <p><h3>Enter value to be stored in cookie</h3></p>
+             <p><input type = 'text' name = 'value'/></p>
+             <p><input type = 'submit' value = 'Set Cookie'/></p>
+          </form>
+       </body>
+    </html>
+    """
+    
+    return make_response(form)
 
 
 
